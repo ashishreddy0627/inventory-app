@@ -31,3 +31,16 @@ build/
 
 ### VS Code ###
 .vscode/
+# Maven build
+/target/
+
+# Local H2 database files
+/data/
+
+# Logs
+run.log
+*.log
+
+# IDE/editor stuff (optional)
+.vscode/
+.idea/

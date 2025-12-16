@@ -1,39 +1,79 @@
 package com.example.inventory_app.controller;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
 import com.example.inventory_app.dto.PurchaseRequest;
 import com.example.inventory_app.dto.ReorderItemResponse;
 import com.example.inventory_app.dto.SaleRequest;
 import com.example.inventory_app.entity.Item;
+import com.example.inventory_app.entity.Store;
 import com.example.inventory_app.repository.ItemRepository;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
-
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Optional;
+import com.example.inventory_app.repository.StoreRepository;
 
 @RestController
 @RequestMapping("/api")
 public class InventoryController {
 
     private final ItemRepository itemRepository;
+    private final StoreRepository storeRepository;
 
-    public InventoryController(ItemRepository itemRepository) {
+    public InventoryController(ItemRepository itemRepository,
+                               StoreRepository storeRepository) {
         this.itemRepository = itemRepository;
+        this.storeRepository = storeRepository;
         System.out.println(">>> InventoryController bean created");
     }
 
-    // GET /api/items - list all items
+    // ========= STORE ENDPOINTS =========
+
+    // POST /api/stores - create a new store
+    @PostMapping("/stores")
+    public Store createStore(@RequestBody Store store) {
+        if (store.getIsActive() == null) {
+            store.setIsActive(true);
+        }
+        return storeRepository.save(store);
+    }
+
+    // GET /api/stores - list all stores
+    @GetMapping("/stores")
+    public List<Store> getStores() {
+        return storeRepository.findAll();
+    }
+
+    // ========= ITEM ENDPOINTS =========
+
+    // GET /api/items - list all items (across all stores)
     @GetMapping("/items")
     public List<Item> getAllItems() {
         return itemRepository.findAll();
     }
 
+    // GET /api/stores/{storeId}/items - list items for one store
+    @GetMapping("/stores/{storeId}/items")
+    public List<Item> getItemsByStore(@PathVariable Long storeId) {
+        return itemRepository.findAll()
+                .stream()
+                .filter(i -> storeId.equals(i.getStoreId()))
+                .toList();
+    }
+
     // POST /api/items - create a new item
     @PostMapping("/items")
     public Item createItem(@RequestBody Item item) {
+        // if no storeId provided, default to store 1 (single store case)
         if (item.getStoreId() == null) {
-            item.setStoreId(1L); // single store for now
+            item.setStoreId(1L);
         }
         if (item.getIsActive() == null) {
             item.setIsActive(true);
@@ -50,6 +90,8 @@ public class InventoryController {
 
         return itemRepository.save(item);
     }
+
+    // ========= TRANSACTION ENDPOINTS =========
 
     // POST /api/transactions/sale - record a sale and reduce stock
     @PostMapping("/transactions/sale")
@@ -95,10 +137,28 @@ public class InventoryController {
         return ResponseEntity.ok(updated);
     }
 
-    // GET /api/reorder-list - items that need restocking and how many to order
+    // ========= REORDER ENDPOINTS =========
+
+    // GET /api/reorder-list - global reorder list (all stores)
     @GetMapping("/reorder-list")
     public List<ReorderItemResponse> getReorderList() {
         List<Item> items = itemRepository.findAll();
+        return buildReorderList(items);
+    }
+
+    // GET /api/stores/{storeId}/reorder-list - reorder list for one store
+    @GetMapping("/stores/{storeId}/reorder-list")
+    public List<ReorderItemResponse> getReorderListForStore(@PathVariable Long storeId) {
+        List<Item> items = itemRepository.findAll()
+                .stream()
+                .filter(i -> storeId.equals(i.getStoreId()))
+                .toList();
+
+        return buildReorderList(items);
+    }
+
+    // Helper: common reorder list logic
+    private List<ReorderItemResponse> buildReorderList(List<Item> items) {
         List<ReorderItemResponse> result = new ArrayList<>();
 
         for (Item item : items) {
