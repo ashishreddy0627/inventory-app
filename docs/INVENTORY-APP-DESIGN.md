@@ -1,86 +1,144 @@
-# Inventory App – Design Notes
+# Inventory App – Design & Code Map
 
-## Goal
+This document is for **future me** so I can quickly remember:
 
-Inventory app for a single gas station / grocery store:
-- Track all items in the store
-- Decrease stock when an item is sold
-- Increase stock when new stock arrives
-- When it’s time to order, show:
-  - which items are low
-  - how many units to order for each item
-
-Later I will extend this to handle multiple stores.
+- What this app does
+- How the data is structured
+- Where important code lives
+- How to run backend + UI
+- How to add new features
 
 ---
 
-## Tech Stack
+## 1. What this app does (current scope)
 
-- Java 17
-- Spring Boot (REST API)
-- Spring Data JPA
-- H2 in-memory DB (for now)
-- JSON APIs (tested with curl / Postman)
+This app is a **simple inventory system** for a **gas station / grocery store**.
 
-App URL (local): `http://localhost:8082`
+For each store, I can:
 
----
+- Keep a list of items (e.g., Coke 500ml, Chips, etc.)
+- Track **current stock**, **reorder level**, and **target stock**
+- Record **sales** (stock goes down)
+- Record **purchases** (stock goes up)
+- Get a **reorder list** that tells me:
+  - Which items are low
+  - How many units I should order to reach the target stock
 
-## Data Model
+Right now it supports:
 
-### Entity: `Item`  
-Package: `com.example.inventory_app.entity`
-
-Represents one product in the store.
-
-Fields:
-- `id` (Long) – primary key
-- `name` (String) – item name (e.g. "Coke 500ml")
-- `sku` (String) – internal code
-- `barcode` (String) – barcode on the physical product
-- `unit` (String) – e.g. "bottle", "can", "piece"
-- `currentStock` (Integer) – how many units I currently have
-- `reorderLevel` (Integer) – when stock is at or below this number, item should be reordered
-- `targetStock` (Integer) – what stock I want to have after reordering
-- `isActive` (Boolean) – whether this item is active
-- `storeId` (Long) – for now always 1 (single store), but ready for multi-store later
-
-### Repositories
-
-- `ItemRepository`  
-  Package: `com.example.inventory_app.repository`  
-  - Extends `JpaRepository<Item, Long>`  
-  - Used by the controller to read and write item data.
-
-### DTOs (in `com.example.inventory_app.dto`)
-
-- `SaleRequest`
-  - Fields: `itemId`, `quantity`, `notes`
-  - Used when recording a sale (reduce stock).
-
-- `PurchaseRequest`
-  - Fields: `itemId`, `quantity`, `notes`
-  - Used when recording a purchase / new stock (increase stock).
-
-- `ReorderItemResponse`
-  - Fields: `itemId`, `name`, `currentStock`, `reorderLevel`, `targetStock`, `reorderQuantity`
-  - Used to return rows from `/api/reorder-list` so I know exactly how much to order.
+- ✅ Multiple stores (via `Store` entity)
+- ✅ Items tied to a store (via `storeId` field)
+- ✅ REST API (Spring Boot)
+- ✅ Simple UI (React) to view stores, inventory, and reorder list
+- ✅ PostgreSQL database for persistent data
 
 ---
 
-## REST API (InventoryController)
+## 2. Tech stack
 
-Package: `com.example.inventory_app.controller`  
-Class: `InventoryController`
+### Backend (API)
 
-Base path for all endpoints: `/api`
+- **Language**: Java
+- **Framework**: Spring Boot
+- **Build tool**: Maven
+- **DB**: PostgreSQL
+- **Port**: `8082`
 
-### 1. `GET /api/items`
+Main goal: expose REST APIs that can be used by UI or other systems.
 
-- Returns a list of all items with current stock.  
-- Use this to see what’s currently in the store.
+### Frontend (UI)
 
-Example:
+- **Framework**: React
+- **Tooling**: create-react-app
+- **Port**: `3000`
 
-```bash
-curl http://localhost:8082/api/items
+Main goal: give a simple dashboard for store owners to see stock and reorder list.
+
+---
+
+## 3. Project structure – important files
+
+### 3.1 Backend – package `com.example.inventory_app`
+
+**Main app class:**
+
+- `src/main/java/com/example/inventory_app/InventoryAppApplication.java`  
+  - Standard Spring Boot main class.
+  - Starts the application and web server.
+
+**Global CORS config:**
+
+- `src/main/java/com/example/inventory_app/GlobalCorsConfig.java`
+  - Enables CORS so the React app at `http://localhost:3000` can call the backend.
+  - Applies to `/api/**` endpoints.
+
+**Entities (database tables):**
+
+- `src/main/java/com/example/inventory_app/entity/Store.java`
+  - Represents a store (gas station, grocery, etc.)
+  - Fields (main ones):
+    - `Long id`
+    - `String name`
+    - `String location`
+    - `Boolean isActive`
+
+- `src/main/java/com/example/inventory_app/entity/Item.java`
+  - Represents an inventory item.
+  - Fields (main ones):
+    - `Long id`
+    - `String name`
+    - `String sku`
+    - `String barcode`
+    - `String unit`
+    - `Integer currentStock`
+    - `Integer reorderLevel`
+    - `Integer targetStock`
+    - `Boolean isActive`
+    - `Long storeId` → links the item to a specific `Store`
+
+**Repositories (DB access):**
+
+- `src/main/java/com/example/inventory_app/repository/StoreRepository.java`
+  - Extends `JpaRepository<Store, Long>`
+  - Used for CRUD operations on `Store`.
+
+- `src/main/java/com/example/inventory_app/repository/ItemRepository.java`
+  - Extends `JpaRepository<Item, Long>`
+  - Used for CRUD operations on `Item`.
+
+**DTOs (request/response models):**
+
+- `src/main/java/com/example/inventory_app/dto/SaleRequest.java`
+  - Used for `/transactions/sale` endpoint.
+  - Fields:
+    - `Long itemId`
+    - `Integer quantity`
+
+- `src/main/java/com/example/inventory_app/dto/PurchaseRequest.java`
+  - Used for `/transactions/purchase` endpoint.
+  - Fields:
+    - `Long itemId`
+    - `Integer quantity`
+
+- `src/main/java/com/example/inventory_app/dto/ReorderItemResponse.java`
+  - Used in `/reorder-list` endpoints.
+  - Fields:
+    - `Long itemId`
+    - `String name`
+    - `Integer currentStock`
+    - `Integer reorderLevel`
+    - `Integer targetStock`
+    - `Integer reorderQuantity` (how many units to order)
+
+**Controller (REST API):**
+
+- `src/main/java/com/example/inventory_app/controller/InventoryController.java`
+
+  This class exposes all main API endpoints.  
+  It is annotated with:
+
+  ```java
+  @CrossOrigin(origins = "*")
+  @RestController
+  @RequestMapping("/api")
+  public class InventoryController { ... }

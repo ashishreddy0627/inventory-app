@@ -27,16 +27,18 @@ public class InventoryController {
     private final ItemRepository itemRepository;
     private final StoreRepository storeRepository;
 
-    public InventoryController(ItemRepository itemRepository,
-                               StoreRepository storeRepository) {
+    public InventoryController(ItemRepository itemRepository, StoreRepository storeRepository) {
         this.itemRepository = itemRepository;
         this.storeRepository = storeRepository;
-        System.out.println(">>> InventoryController bean created");
     }
 
-    // ========= STORE ENDPOINTS =========
+    // ---------- STORES ----------
 
-    // POST /api/stores - create a new store
+    @GetMapping("/stores")
+    public List<Store> getAllStores() {
+        return storeRepository.findAll();
+    }
+
     @PostMapping("/stores")
     public Store createStore(@RequestBody Store store) {
         if (store.getIsActive() == null) {
@@ -45,35 +47,22 @@ public class InventoryController {
         return storeRepository.save(store);
     }
 
-    // GET /api/stores - list all stores
-    @GetMapping("/stores")
-    public List<Store> getStores() {
-        return storeRepository.findAll();
-    }
+    // ---------- ITEMS ----------
 
-    // ========= ITEM ENDPOINTS =========
-
-    // GET /api/items - list all items (across all stores)
     @GetMapping("/items")
     public List<Item> getAllItems() {
         return itemRepository.findAll();
     }
 
-    // GET /api/stores/{storeId}/items - list items for one store
     @GetMapping("/stores/{storeId}/items")
     public List<Item> getItemsByStore(@PathVariable Long storeId) {
-        return itemRepository.findAll()
-                .stream()
-                .filter(i -> storeId.equals(i.getStoreId()))
-                .toList();
+        return itemRepository.findByStoreId(storeId);
     }
 
-    // POST /api/items - create a new item
     @PostMapping("/items")
     public Item createItem(@RequestBody Item item) {
-        // if no storeId provided, default to store 1 (single store case)
         if (item.getStoreId() == null) {
-            item.setStoreId(1L);
+            item.setStoreId(1L); // default to store 1 if not provided
         }
         if (item.getIsActive() == null) {
             item.setIsActive(true);
@@ -91,103 +80,102 @@ public class InventoryController {
         return itemRepository.save(item);
     }
 
-    // ========= TRANSACTION ENDPOINTS =========
+    // ---------- TRANSACTIONS ----------
 
-    // POST /api/transactions/sale - record a sale and reduce stock
     @PostMapping("/transactions/sale")
     public ResponseEntity<?> recordSale(@RequestBody SaleRequest request) {
         if (request.getItemId() == null || request.getQuantity() == null || request.getQuantity() <= 0) {
             return ResponseEntity.badRequest().body("itemId and positive quantity are required");
         }
 
-        Optional<Item> optItem = itemRepository.findById(request.getItemId());
-        if (optItem.isEmpty()) {
-            return ResponseEntity.badRequest().body("Item not found: " + request.getItemId());
+        Optional<Item> itemOpt = itemRepository.findById(request.getItemId());
+        if (itemOpt.isEmpty()) {
+            return ResponseEntity.badRequest().body("Item not found");
         }
 
-        Item item = optItem.get();
+        Item item = itemOpt.get();
+        if (item.getCurrentStock() == null) {
+            item.setCurrentStock(0);
+        }
 
         if (item.getCurrentStock() < request.getQuantity()) {
-            return ResponseEntity.badRequest().body("Not enough stock for item: " + item.getName());
+            return ResponseEntity.badRequest().body("Not enough stock");
         }
 
         item.setCurrentStock(item.getCurrentStock() - request.getQuantity());
-        Item updated = itemRepository.save(item);
+        itemRepository.save(item);
 
-        return ResponseEntity.ok(updated);
+        return ResponseEntity.ok(item);
     }
 
-    // POST /api/transactions/purchase - record a purchase and increase stock
     @PostMapping("/transactions/purchase")
     public ResponseEntity<?> recordPurchase(@RequestBody PurchaseRequest request) {
         if (request.getItemId() == null || request.getQuantity() == null || request.getQuantity() <= 0) {
             return ResponseEntity.badRequest().body("itemId and positive quantity are required");
         }
 
-        Optional<Item> optItem = itemRepository.findById(request.getItemId());
-        if (optItem.isEmpty()) {
-            return ResponseEntity.badRequest().body("Item not found: " + request.getItemId());
+        Optional<Item> itemOpt = itemRepository.findById(request.getItemId());
+        if (itemOpt.isEmpty()) {
+            return ResponseEntity.badRequest().body("Item not found");
         }
 
-        Item item = optItem.get();
+        Item item = itemOpt.get();
+        if (item.getCurrentStock() == null) {
+            item.setCurrentStock(0);
+        }
 
         item.setCurrentStock(item.getCurrentStock() + request.getQuantity());
-        Item updated = itemRepository.save(item);
+        itemRepository.save(item);
 
-        return ResponseEntity.ok(updated);
+        return ResponseEntity.ok(item);
     }
 
-    // ========= REORDER ENDPOINTS =========
+    // ---------- REORDER LIST ----------
 
-    // GET /api/reorder-list - global reorder list (all stores)
     @GetMapping("/reorder-list")
-    public List<ReorderItemResponse> getReorderList() {
+    public List<ReorderItemResponse> getReorderListForAllStores() {
         List<Item> items = itemRepository.findAll();
         return buildReorderList(items);
     }
 
-    // GET /api/stores/{storeId}/reorder-list - reorder list for one store
     @GetMapping("/stores/{storeId}/reorder-list")
     public List<ReorderItemResponse> getReorderListForStore(@PathVariable Long storeId) {
-        List<Item> items = itemRepository.findAll()
-                .stream()
-                .filter(i -> storeId.equals(i.getStoreId()))
-                .toList();
-
+        List<Item> items = itemRepository.findByStoreId(storeId);
         return buildReorderList(items);
     }
 
-    // Helper: common reorder list logic
     private List<ReorderItemResponse> buildReorderList(List<Item> items) {
         List<ReorderItemResponse> result = new ArrayList<>();
 
         for (Item item : items) {
-            Integer current = item.getCurrentStock();
-            Integer reorderLevel = item.getReorderLevel();
-            Integer target = item.getTargetStock();
+            Integer current = item.getCurrentStock() != null ? item.getCurrentStock() : 0;
+            Integer reorderLevel = item.getReorderLevel() != null ? item.getReorderLevel() : 0;
+            Integer target = item.getTargetStock() != null ? item.getTargetStock() : 0;
 
-            if (current == null || reorderLevel == null || target == null) {
-                continue;
-            }
-
-            if (current <= reorderLevel) {
-                int qty = target - current;
-                if (qty <= 0) {
-                    continue;
-                }
-
-                ReorderItemResponse row = new ReorderItemResponse();
-                row.setItemId(item.getId());
-                row.setName(item.getName());
-                row.setCurrentStock(current);
-                row.setReorderLevel(reorderLevel);
-                row.setTargetStock(target);
-                row.setReorderQuantity(qty);
-
-                result.add(row);
+            if (current <= reorderLevel && target > current) {
+                ReorderItemResponse dto = new ReorderItemResponse();
+                dto.setItemId(item.getId());
+                dto.setName(item.getName());
+                dto.setCurrentStock(current);
+                dto.setReorderLevel(reorderLevel);
+                dto.setTargetStock(target);
+                dto.setReorderQuantity(target - current);
+                result.add(dto);
             }
         }
 
         return result;
+    }
+
+    // ---------- BARCODE LOOKUP ----------
+
+    @GetMapping("/stores/{storeId}/items/by-barcode/{barcode}")
+    public ResponseEntity<Item> getItemByBarcode(
+            @PathVariable Long storeId,
+            @PathVariable String barcode) {
+
+        Optional<Item> itemOpt = itemRepository.findByBarcode(barcode);
+        return itemOpt.map(ResponseEntity::ok)
+                      .orElseGet(() -> ResponseEntity.notFound().build());
     }
 }
