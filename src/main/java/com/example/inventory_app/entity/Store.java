@@ -1,9 +1,13 @@
 package com.example.inventory_app.entity;
 
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
 @Entity
@@ -14,17 +18,27 @@ public class Store {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(nullable = false, length = 150)
     private String name;
+
+    @Column(length = 250)
     private String location;
-    private Boolean isActive;
+
+    @Column(nullable = false)
+    private boolean isActive = true;
+
+    // NEW: store owner (optional for now)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "owner_user_id")
+    private AppUser owner;
 
     public Store() {
     }
 
-    public Store(String name, String location, Boolean isActive) {
+    public Store(String name, String location) {
         this.name = name;
         this.location = location;
-        this.isActive = isActive;
+        this.isActive = true;
     }
 
     public Long getId() {
@@ -47,11 +61,19 @@ public class Store {
         this.location = location;
     }
 
-    public Boolean getIsActive() {
+    public boolean getIsActive() {
         return isActive;
     }
 
-    public void setIsActive(Boolean active) {
-        isActive = active;
+    public void setIsActive(boolean active) {
+        this.isActive = active;
+    }
+
+    public AppUser getOwner() {
+        return owner;
+    }
+
+    public void setOwner(AppUser owner) {
+        this.owner = owner;
     }
 }
