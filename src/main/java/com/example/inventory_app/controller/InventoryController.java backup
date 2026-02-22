@@ -1,12 +1,10 @@
 package com.example.inventory_app.controller;
 
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -17,36 +15,25 @@ import org.springframework.web.bind.annotation.RestController;
 import com.example.inventory_app.dto.PurchaseRequest;
 import com.example.inventory_app.dto.ReorderItemResponse;
 import com.example.inventory_app.dto.SaleRequest;
-import com.example.inventory_app.dto.StockAdjustmentRequest;
 import com.example.inventory_app.entity.AppUser;
 import com.example.inventory_app.entity.Item;
 import com.example.inventory_app.entity.Store;
-import com.example.inventory_app.entity.StockTransaction;
-import com.example.inventory_app.entity.TransactionType;
 import com.example.inventory_app.repository.AppUserRepository;
 import com.example.inventory_app.repository.ItemRepository;
-import com.example.inventory_app.repository.StockTransactionRepository;
 import com.example.inventory_app.repository.StoreRepository;
 
 @RestController
 @RequestMapping("/api")
-@CrossOrigin(origins = "http://localhost:3000")
 public class InventoryController {
 
     private final ItemRepository itemRepository;
     private final StoreRepository storeRepository;
     private final AppUserRepository appUserRepository;
-    private final StockTransactionRepository transactionRepository;
 
-    public InventoryController(
-            ItemRepository itemRepository,
-            StoreRepository storeRepository,
-            AppUserRepository appUserRepository,
-            StockTransactionRepository transactionRepository) {
+    public InventoryController(ItemRepository itemRepository, StoreRepository storeRepository, AppUserRepository appUserRepository) {
         this.itemRepository = itemRepository;
         this.storeRepository = storeRepository;
         this.appUserRepository = appUserRepository;
-        this.transactionRepository = transactionRepository;
     }
 
     // ---------- STORES ----------
@@ -60,8 +47,7 @@ public class InventoryController {
     public Store createStore(@RequestBody Store store) {
         store.setIsActive(true);
 
-        AppUser owner = appUserRepository.findByEmail("owner@example.com")
-                .orElseThrow(() -> new IllegalStateException("default owner user not found"));
+        AppUser owner = appUserRepository.findByEmail("owner@example.com").orElseThrow(() -> new IllegalStateException("default owner user not found"));
         store.setOwner(owner);
         return storeRepository.save(store);
     }
@@ -99,72 +85,7 @@ public class InventoryController {
         return itemRepository.save(item);
     }
 
-    @PostMapping("/stores/{storeId}/items")
-    public Item createItemForStore(@PathVariable Long storeId, @RequestBody Item item) {
-        item.setStoreId(storeId);
-        if (item.getIsActive() == null) {
-            item.setIsActive(true);
-        }
-        if (item.getCurrentStock() == null) {
-            item.setCurrentStock(0);
-        }
-        if (item.getReorderLevel() == null) {
-            item.setReorderLevel(0);
-        }
-        if (item.getTargetStock() == null) {
-            item.setTargetStock(0);
-        }
-
-        return itemRepository.save(item);
-    }
-
-    // ---------- STOCK ADJUSTMENTS (NEW UNIFIED ENDPOINT) ----------
-
-    @PostMapping("/items/{itemId}/adjust-stock")
-    public ResponseEntity<?> adjustStock(@PathVariable Long itemId, @RequestBody StockAdjustmentRequest request) {
-        Optional<Item> itemOpt = itemRepository.findById(itemId);
-        if (itemOpt.isEmpty()) {
-            return ResponseEntity.badRequest().body("Item not found");
-        }
-
-        Item item = itemOpt.get();
-        Integer currentStock = item.getCurrentStock() != null ? item.getCurrentStock() : 0;
-
-        // Validate quantity
-        if (request.getQuantity() == null || request.getQuantity() == 0) {
-            return ResponseEntity.badRequest().body("Quantity cannot be zero");
-        }
-
-        // For sales (negative quantity), check if we have enough stock
-        if (request.getQuantity() < 0 && currentStock < Math.abs(request.getQuantity())) {
-            return ResponseEntity.badRequest().body("Not enough stock. Current: " + currentStock);
-        }
-
-        // Calculate new stock
-        Integer newStock = currentStock + request.getQuantity();
-
-        // Log the transaction
-        StockTransaction transaction = new StockTransaction();
-        transaction.setItemId(itemId);
-        transaction.setStoreId(item.getStoreId());
-        transaction.setType(request.getType() != null ? request.getType() : 
-                            (request.getQuantity() > 0 ? TransactionType.DELIVERY : TransactionType.SALE));
-        transaction.setQuantity(request.getQuantity());
-        transaction.setStockBefore(currentStock);
-        transaction.setStockAfter(newStock);
-        transaction.setNotes(request.getNotes());
-        transaction.setTransactionDate(LocalDateTime.now());
-
-        transactionRepository.save(transaction);
-
-        // Update item stock
-        item.setCurrentStock(newStock);
-        itemRepository.save(item);
-
-        return ResponseEntity.ok(item);
-    }
-
-    // ---------- LEGACY TRANSACTION ENDPOINTS (kept for backward compatibility) ----------
+    // ---------- TRANSACTIONS ----------
 
     @PostMapping("/transactions/sale")
     public ResponseEntity<?> recordSale(@RequestBody SaleRequest request) {
@@ -178,28 +99,15 @@ public class InventoryController {
         }
 
         Item item = itemOpt.get();
-        Integer currentStock = item.getCurrentStock() != null ? item.getCurrentStock() : 0;
+        if (item.getCurrentStock() == null) {
+            item.setCurrentStock(0);
+        }
 
-        if (currentStock < request.getQuantity()) {
+        if (item.getCurrentStock() < request.getQuantity()) {
             return ResponseEntity.badRequest().body("Not enough stock");
         }
 
-        Integer newStock = currentStock - request.getQuantity();
-
-        // Log the transaction
-        StockTransaction transaction = new StockTransaction();
-        transaction.setItemId(item.getId());
-        transaction.setStoreId(item.getStoreId());
-        transaction.setType(TransactionType.SALE);
-        transaction.setQuantity(-request.getQuantity()); // Negative for sale
-        transaction.setStockBefore(currentStock);
-        transaction.setStockAfter(newStock);
-        transaction.setTransactionDate(LocalDateTime.now());
-
-        transactionRepository.save(transaction);
-
-        // Update item
-        item.setCurrentStock(newStock);
+        item.setCurrentStock(item.getCurrentStock() - request.getQuantity());
         itemRepository.save(item);
 
         return ResponseEntity.ok(item);
@@ -217,45 +125,14 @@ public class InventoryController {
         }
 
         Item item = itemOpt.get();
-        Integer currentStock = item.getCurrentStock() != null ? item.getCurrentStock() : 0;
-        Integer newStock = currentStock + request.getQuantity();
+        if (item.getCurrentStock() == null) {
+            item.setCurrentStock(0);
+        }
 
-        // Log the transaction
-        StockTransaction transaction = new StockTransaction();
-        transaction.setItemId(item.getId());
-        transaction.setStoreId(item.getStoreId());
-        transaction.setType(TransactionType.DELIVERY);
-        transaction.setQuantity(request.getQuantity()); // Positive for delivery
-        transaction.setStockBefore(currentStock);
-        transaction.setStockAfter(newStock);
-        transaction.setTransactionDate(LocalDateTime.now());
-
-        transactionRepository.save(transaction);
-
-        // Update item
-        item.setCurrentStock(newStock);
+        item.setCurrentStock(item.getCurrentStock() + request.getQuantity());
         itemRepository.save(item);
 
         return ResponseEntity.ok(item);
-    }
-
-    // ---------- TRANSACTION HISTORY ----------
-
-    @GetMapping("/items/{itemId}/transactions")
-    public List<StockTransaction> getItemTransactions(@PathVariable Long itemId) {
-        return transactionRepository.findByItemIdOrderByTransactionDateDesc(itemId);
-    }
-
-    @GetMapping("/stores/{storeId}/transactions")
-    public List<StockTransaction> getStoreTransactions(@PathVariable Long storeId) {
-        return transactionRepository.findByStoreIdOrderByTransactionDateDesc(storeId);
-    }
-
-    @GetMapping("/stores/{storeId}/items/{itemId}/transactions")
-    public List<StockTransaction> getStoreItemTransactions(
-            @PathVariable Long storeId,
-            @PathVariable Long itemId) {
-        return transactionRepository.findByStoreIdAndItemIdOrderByTransactionDateDesc(storeId, itemId);
     }
 
     // ---------- REORDER LIST ----------
@@ -304,6 +181,75 @@ public class InventoryController {
 
         Optional<Item> itemOpt = itemRepository.findByBarcode(barcode);
         return itemOpt.map(ResponseEntity::ok)
-                .orElseGet(() -> ResponseEntity.notFound().build());
+                      .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    // ---------- EDIT / DELETE ----------
+
+    @PutMapping("/items/{id}")
+    public ResponseEntity<?> updateItem(@PathVariable Long id, @RequestBody Item updatedItem) {
+        Optional<Item> itemOpt = itemRepository.findById(id);
+        if (itemOpt.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        Item item = itemOpt.get();
+        
+        // Update fields
+        item.setName(updatedItem.getName());
+        item.setSku(updatedItem.getSku());
+        item.setBarcode(updatedItem.getBarcode());
+        item.setUnit(updatedItem.getUnit());
+        item.setCurrentStock(updatedItem.getCurrentStock());
+        item.setReorderLevel(updatedItem.getReorderLevel());
+        item.setTargetStock(updatedItem.getTargetStock());
+        item.setIsActive(updatedItem.getIsActive());
+
+        itemRepository.save(item);
+        return ResponseEntity.ok(item);
+    }
+
+    @DeleteMapping("/items/{id}")
+    public ResponseEntity<?> deleteItem(@PathVariable Long id) {
+        if (!itemRepository.existsById(id)) {
+            return ResponseEntity.notFound().build();
+        }
+        
+        itemRepository.deleteById(id);
+        return ResponseEntity.ok().build();
+    }
+
+    @PutMapping("/stores/{id}")
+    public ResponseEntity<?> updateStore(@PathVariable Long id, @RequestBody Store updatedStore) {
+        Optional<Store> storeOpt = storeRepository.findById(id);
+        if (storeOpt.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        Store store = storeOpt.get();
+        store.setName(updatedStore.getName());
+        store.setLocation(updatedStore.getLocation());
+        store.setIsActive(updatedStore.getIsActive());
+
+        storeRepository.save(store);
+        return ResponseEntity.ok(store);
+    }
+
+    @DeleteMapping("/stores/{id}")
+    public ResponseEntity<?> deleteStore(@PathVariable Long id) {
+        Optional<Store> storeOpt = storeRepository.findById(id);
+        if (storeOpt.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        // Check if store has items
+        List<Item> items = itemRepository.findByStoreId(id);
+        if (!items.isEmpty()) {
+            return ResponseEntity.badRequest()
+                .body("Cannot delete store with existing items. Delete items first.");
+        }
+
+        storeRepository.deleteById(id);
+        return ResponseEntity.ok().build();
     }
 }
